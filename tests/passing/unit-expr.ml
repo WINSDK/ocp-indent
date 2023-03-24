@@ -51,6 +51,12 @@ let e =
   |]
 
 let e =
+  [: true;
+     false;
+     true
+  :]
+
+let e =
   { f1 = true;
     f2 = false;
     f3 = true;

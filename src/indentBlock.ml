@@ -29,6 +29,7 @@ module Node = struct
     | KBrace
     | KBracket
     | KBracketBar
+    | KBracketColon
     | KLet
     | KAnd of kind
     | KLetIn
@@ -108,6 +109,7 @@ module Node = struct
     | KBrace -> "KBrace"
     | KBracket -> "KBracket"
     | KBracketBar -> "KBracketBar"
+    | KBracketColon -> "KBracketColon"
     (* | KField -> "KField" *)
     | KLet -> "KLet"
     | KIn -> "KIn"
@@ -364,7 +366,7 @@ let last_token t =
    "context-type" in the stack *)
 let rec is_inside_type path =
   match unwind (function
-      | KParen | KBegin | KBracket | KBrace | KBracketBar
+      | KParen | KBegin | KBracket | KBrace | KBracketBar | KBracketColon
       | KVal | KLet | KLetIn | KBody (KVal | KLet | KLetIn)
       | KBody(KType|KExternal) | KColon
       | KStruct | KSig | KObject -> true
@@ -402,7 +404,7 @@ let reset_line_indent config current_line path =
         aux (t::acc) r
     | p ->
         let p, acc, extra = match acc with
-          | {kind = KParen|KBracket|KBrace|KBracketBar} as acc1 :: acc
+          | {kind = KParen|KBracket|KBrace|KBracketBar|KBracketColon} as acc1 :: acc
             when acc1.line_indent = acc1.column
             ->
               (* ignore those if at start of line *)
@@ -597,14 +599,14 @@ let rec update_path config block stream tok =
           if pad >= 0 || not starts_line then None
           else
             match p with
-            | {kind=KParen|KBracket|KBracketBar
+            | {kind=KParen|KBracket|KBracketBar|KBracketColon
                     |KBrace|KBar _|KWith KBrace|KBody _}
               as paren :: _
               when paren.line = h.line
               ->
                 let paren_len = match paren.kind with
                   | KParen | KBracket | KBrace | KBar _ | KBody _ -> 1
-                  | KBracketBar -> 2
+                  | KBracketBar | KBracketColon -> 2
                   | KWith KBrace -> 4
                   | _ -> assert false
                 in
@@ -712,7 +714,7 @@ let rec update_path config block stream tok =
     let p = match p with
       (* Special case: paren after arrow has extra indent
          (see test js-begin) *)
-      | {kind=KParen|KBegin|KBracket|KBracketBar|KBrace} :: {kind=KArrow _} :: _
+      | {kind=KParen|KBegin|KBracket|KBracketBar|KBracketColon|KBrace} :: {kind=KArrow _} :: _
         when not starts_line ->
           Path.shift p config.i_base
       | p -> p
@@ -753,7 +755,7 @@ let rec update_path config block stream tok =
     let in_delim_block () =
         match unwind_while (fun kind -> prio kind >= op_prio) path with
         | Some ({ kind = KExpr _; line } ::
-                { kind = (KBrace|KParen|KBracket|KBracketBar); line = bline } ::
+                { kind = (KBrace|KParen|KBracket|KBracketBar|KBracketColon); line = bline } ::
                 _) ->
             line = bline
         | _ -> false in
@@ -854,6 +856,7 @@ let rec update_path config block stream tok =
   | LBRACKETPERCENTPERCENT | LBRACKETATATAT ->
       append ~pad:4 (KExtendedItem ([], ext_kind tok.token)) L (unwind_top block.path)
   | LBRACKETBAR -> open_paren KBracketBar block.path
+  | LBRACKETCOLON -> open_paren KBracketColon block.path
   | LBRACE | LBRACELESS ->
       open_paren KBrace block.path
   | FUNCTION ->
@@ -1118,6 +1121,8 @@ let rec update_path config block stream tok =
 
   | BARRBRACKET -> close ((=) KBracketBar) block.path
 
+  | COLONRBRACKET -> close ((=) KBracketColon) block.path
+
   | RPAREN -> close ((=) KParen) block.path
 
   | RBRACE | GREATERRBRACE -> close ((=) KBrace) block.path
@@ -1141,7 +1146,7 @@ let rec update_path config block stream tok =
 
   | BAR ->
       let path = unwind (function
-          | KParen | KBegin | KBracket | KBrace | KBracketBar
+          | KParen | KBegin | KBracket | KBrace | KBracketBar | KBracketColon
           | KWith(KMatch|KTry) | KBar(KMatch|KTry) | KArrow(KMatch|KTry)
           | KLet | KLetIn
           | KBody(KType) -> true
@@ -1165,7 +1170,7 @@ let rec update_path config block stream tok =
   | MINUSGREATER ->
       let rec find_parent path =
         let path = unwind (function
-            | KParen | KBegin | KBracket | KBrace | KBracketBar
+            | KParen | KBegin | KBracket | KBrace | KBracketBar | KBracketColon
             | KWith(KMatch|KTry) | KBar(KMatch|KTry) | KArrow(KMatch|KTry)
             | KFun
             | KBody(KType|KExternal) | KColon
@@ -1212,7 +1217,7 @@ let rec update_path config block stream tok =
             (* might happen if doing 'when match' for example *)
             (match
               unwind (function
-                | KParen | KBegin | KBracket | KBrace | KBracketBar
+                | KParen | KBegin | KBracket | KBrace | KBracketBar | KBracketColon
                 | KWith(KMatch|KTry)
                 | KFun
                 | KBody(KType|KExternal) | KColon
@@ -1228,7 +1233,7 @@ let rec update_path config block stream tok =
 
   | EQUAL ->
       let unwind_to = function
-        | KParen | KBegin | KBrace | KBracket | KBracketBar | KBody _
+        | KParen | KBegin | KBrace | KBracket | KBracketBar | KBracketColon | KBody _
         | KExternal | KModule | KType | KLet | KLetIn | KException | KVal
         | KBar KType
         | KStruct | KSig | KObject
@@ -1261,7 +1266,7 @@ let rec update_path config block stream tok =
                   extend (KExpr (prio_semi+1)) T ~pad:config.i_base p
               | None ->
                   make_infix tok block.path)
-         | {kind=KParen|KBegin|KBracket|KBracketBar|KBody _|KBar KType}::_ ->
+         | {kind=KParen|KBegin|KBracket|KBracketBar|KBracketColon|KBody _|KBar KType}::_ ->
              make_infix tok block.path
          | {kind=KAnd kind | kind} as h::p ->
              let indent = match next_token stream, kind with
@@ -1291,7 +1296,7 @@ let rec update_path config block stream tok =
 
   | COLON ->
       let path = unwind (function
-          | KParen | KBegin | KBrace | KBracket | KBracketBar | KBody _
+          | KParen | KBegin | KBrace | KBracket | KBracketBar | KBracketColon | KBody _
           | KModule | KLet | KLetIn | KExternal | KVal | KColon
           | KAnd(KModule|KLet|KLetIn) | KBar KType -> true
           | _ -> false)
@@ -1398,7 +1403,7 @@ let rec update_path config block stream tok =
   | GREATER ->
       if is_inside_type block.path then
         match unwind (function
-            | KParen | KBegin | KBracket | KBrace | KBracketBar
+            | KParen | KBegin | KBracket | KBrace | KBracketBar | KBracketColon
             | KBody(KType|KExternal) -> true
             | _ -> false)
             block.path
