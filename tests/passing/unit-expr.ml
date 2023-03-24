@@ -56,6 +56,13 @@ let e =
      true
   :]
 
+let e = [ x, y, z
+          for x in xs
+          and y in ys
+          when x <> y
+          for z in zs
+        ]
+
 let e =
   { f1 = true;
     f2 = false;

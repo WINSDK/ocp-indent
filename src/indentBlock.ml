@@ -30,6 +30,9 @@ module Node = struct
     | KBracket
     | KBracketBar
     | KBracketColon
+    | KComprehension
+    | KComprehensionFor
+    | KComprehensionWhen
     | KLet
     | KAnd of kind
     | KLetIn
@@ -110,6 +113,9 @@ module Node = struct
     | KBracket -> "KBracket"
     | KBracketBar -> "KBracketBar"
     | KBracketColon -> "KBracketColon"
+    | KComprehension -> "KComprehension"
+    | KComprehensionFor -> "KComprehensionFor"
+    | KComprehensionWhen -> "KComprehensionWhen"
     (* | KField -> "KField" *)
     | KLet -> "KLet"
     | KIn -> "KIn"
@@ -420,8 +426,9 @@ let reset_line_indent config current_line path =
   in
   aux [] path
 
-let dump t =
-  Printf.eprintf "\027[35m# \027[32m%8s\027[m %s\n%!"
+let dump ?(tag="") t =
+  Printf.eprintf "\027[35m#[%15s] \027[32m%12s\027[m %s\n%!"
+    (shorten_string 15 tag)
     (match t.last with tok::_ -> shorten_string 30 (Lazy.force tok.substr)
                      | _ -> "")
     (to_string t)
@@ -782,6 +789,22 @@ let rec update_path config block stream tok =
         | None -> (* used as prefix ? Don't apply T indent *)
             append (KExpr op_prio) L ~pad:(max 0 indent) path
   in
+  (* Detect whether we're at the start of a comprehension *)
+  let comprehension_start start_keyword block =
+    (* We're at the start of a comprehension if we have an opening bracket followed one or
+       more KExprs (more than one in the case of an application), and the top expression
+       has maximum priority.  If we find that, we skip over all the expressions and signal
+       that we're in a comprehension. *)
+    match block.path with
+    | {kind=KExpr i} :: _ when i = prio_max ->
+        (* Reuse [block.path] here so we're guaranteed there's at least one [KExpr] *)
+        (match unwind_while (function KExpr _ -> true | _ -> false) block.path with
+        | Some (_ :: ({kind = KBracket | KBracketBar | KBracketColon} :: _ as path)) ->
+            Some (append start_keyword L (append KComprehension ~pad:0 L path))
+        | _ -> None)
+    | _ ->
+        None
+  in
   (* KComment/KUnknown nodes correspond to comments or top-level stuff, they
      shouldn't be taken into account when indenting the next token *)
   let block0 = block in
@@ -791,6 +814,7 @@ let rec update_path config block stream tok =
   in
   let (>>!) opt f = match opt with Some x -> x | None -> f () in
   handle_dotted block tok >>! fun () ->
+  (* dump ~tag:(Approx_tokens.to_string tok.token) block; *)
   match tok.token with
   | SEMISEMI    -> append KUnknown L ~pad:0 (unwind_top block.path)
   | INCLUDE     -> append KInclude L (unwind_top block.path)
@@ -915,12 +939,24 @@ let rec update_path config block stream tok =
         (append k L path)
 
   | WHEN ->
-      append KWhen L ~pad:(config.i_base + if starts_line then 0 else 2)
-        (unwind (function
-           | KWith(KTry|KMatch) | KBar(KTry|KMatch) | KFun | KExtendedExpr _ ->
-               true
-           | _ -> false)
-           block.path)
+      (match comprehension_start KComprehensionWhen block with
+       | Some r -> r
+       | None ->
+           let path =
+             unwind (function
+                 | KWith(KTry|KMatch) | KBar(KTry|KMatch) | KFun | KExtendedExpr _
+                 | KComprehension ->
+                     true
+                 | _ -> false)
+               block.path
+           in
+           (match path with
+            | {kind = KComprehension} :: _ ->
+                append KComprehensionWhen L path
+            | _ ->
+                let pad = config.i_base + if starts_line then 0 else 2 in
+                append KWhen L ~pad path))
+
   | OPEN ->
       if last_token block = Some LET then
         append KOpen L block.path
@@ -964,7 +1000,7 @@ let rec update_path config block stream tok =
 
   | AND ->
       let unwind_to = function
-        | KLet | KLetIn | KType | KModule | KParen -> true
+        | KLet | KLetIn | KType | KModule | KParen | KComprehensionFor -> true
         | _ -> false
       in let path = unwind (unwind_to @* follow) block.path in
       (match path with
@@ -984,16 +1020,23 @@ let rec update_path config block stream tok =
 
   | IN ->
       let path =
-        unwind ((function KLetIn | KLet -> true | _ -> false) @* follow)
+        unwind
+          ((function | KComprehensionFor | KLetIn | KLet -> true
+                     | _ -> false)
+           @* follow)
           block.path
       in
       let pad = match next_token stream with
         | Some LET -> 0
         | _ -> config.i_in
       in
-      (match unwind_while ((=) KIn) (parent path) with
-       | Some p -> extend KIn L ~pad p
-       | None -> extend KIn L ~pad path)
+      (match path with
+       | {kind=KComprehensionFor|KAnd KComprehensionFor} :: _ ->
+           append KIn L block.path (* Keep the old path for better indentation *)
+       | _ ->
+          (match unwind_while ((=) KIn) (parent path) with
+           | Some p -> extend KIn L ~pad p
+           | None -> extend KIn L ~pad path))
 
   | TYPE ->
       (match last_token block with
@@ -1103,15 +1146,34 @@ let rec update_path config block stream tok =
       in
       extend KElse L ~pad (unwind ((=) KThen) block.path)
 
-  | WHILE | FOR ->
+  | WHILE ->
       append KLoop L (fold_expr block.path)
+
+  | FOR ->
+      (match comprehension_start KComprehensionFor block with
+       | Some r -> r
+       | None ->
+         (match unwind ((=) KComprehension) block.path with
+          | _ :: _ as path ->
+              append KComprehensionFor L path
+          | [] ->
+              append KLoop L (fold_expr block.path)))
 
   | TO | DOWNTO ->
       let p =
-        Path.maptop (fun n -> { n with indent = n.indent + config.i_base })
-          (unwind ((=) KLoop) block.path)
+        unwind
+          ((function KLoop | KComprehensionFor -> true | _ -> false) @* follow)
+          block.path
       in
-      replace KLoop L p
+      (match p with
+       | {kind = KComprehensionFor} :: _ ->
+           replace KComprehensionFor L p
+       | _ ->
+           let p =
+             Path.maptop (fun n -> { n with indent = n.indent + config.i_base })
+               p
+           in
+           replace KLoop L p)
 
   | DO ->
       extend KDo L (unwind ((=) KLoop) block.path)
@@ -1234,10 +1296,11 @@ let rec update_path config block stream tok =
   | EQUAL ->
       let unwind_to = function
         | KParen | KBegin | KBrace | KBracket | KBracketBar | KBracketColon | KBody _
+        | KComprehensionFor
         | KExternal | KModule | KType | KLet | KLetIn | KException | KVal
         | KBar KType
         | KStruct | KSig | KObject
-        | KAnd(KModule|KType|KLet|KLetIn)
+        | KAnd(KModule|KType|KLet|KLetIn|KComprehensionFor)
         | KConstraint
         | KExtendedItem _ | KExtendedExpr _ -> true
         | _ -> false
@@ -1268,6 +1331,8 @@ let rec update_path config block stream tok =
                   make_infix tok block.path)
          | {kind=KParen|KBegin|KBracket|KBracketBar|KBracketColon|KBody _|KBar KType}::_ ->
              make_infix tok block.path
+         | {kind=KComprehensionFor|KAnd(KComprehensionFor)} as h::p ->
+              {h with indent = h.indent + config.i_base} :: p
          | {kind=KAnd kind | kind} as h::p ->
              let indent = match next_token stream, kind with
                | Some (STRUCT|SIG), _ -> 0
@@ -1748,3 +1813,5 @@ type construct_kind =
 
 let construct_kind t token =
 *)
+
+let dump t = dump t
