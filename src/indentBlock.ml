@@ -791,10 +791,10 @@ let rec update_path config block stream tok =
   in
   (* Detect whether we're at the start of a comprehension *)
   let comprehension_start start_keyword block =
-    (* We're at the start of a comprehension if we have an opening bracket followed one or
-       more KExprs (more than one in the case of an application), and the top expression
-       has maximum priority.  If we find that, we skip over all the expressions and signal
-       that we're in a comprehension. *)
+    (* We're at the start of a comprehension if we have an opening bracket followed by one
+       or more KExprs (more than one in the case of an application), and the top
+       expression has maximum priority.  If we find that, we skip over all the expressions
+       and signal that we're in a comprehension. *)
     match block.path with
     | {kind=KExpr i} :: _ when i = prio_max ->
         (* Reuse [block.path] here so we're guaranteed there's at least one [KExpr] *)
