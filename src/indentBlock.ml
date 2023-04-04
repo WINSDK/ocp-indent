@@ -1154,9 +1154,9 @@ let rec update_path config block stream tok =
        | Some r -> r
        | None ->
          (match unwind ((=) KComprehension) block.path with
-          | _ :: _ as path ->
+          | { kind = KComprehension; _ } :: _ as path ->
               append KComprehensionFor L path
-          | [] ->
+          | _ ->
               append KLoop L (fold_expr block.path)))
 
   | TO | DOWNTO ->
