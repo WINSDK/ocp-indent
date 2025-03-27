@@ -43,4 +43,9 @@ let _ = function
        z;
     |] -> () |
 
+    [: x;
+       y;
+       z;
+    :] -> () |
+
     lazy w -> ()

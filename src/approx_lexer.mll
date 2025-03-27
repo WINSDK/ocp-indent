@@ -483,6 +483,7 @@ rule parse_token = parse
   | "::" { COLONCOLON }
   | ":=" { COLONEQUAL }
   | ":>" { COLONGREATER }
+  | ":]" { COLONRBRACKET }
   | ";" ( '%' identchar + ('.' identchar +) * ) ? { SEMI }
   | ";;" { SEMISEMI }
   | "<"  { LESS }
@@ -490,6 +491,7 @@ rule parse_token = parse
   | "="  { EQUAL }
   | "["  { LBRACKET }
   | "[|" { LBRACKETBAR }
+  | "[:" { LBRACKETCOLON }
   | "[<" { LBRACKETLESS }
   | "[>" { LBRACKETGREATER }
   | "]"  { RBRACKET }
